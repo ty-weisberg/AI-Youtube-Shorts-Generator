@@ -1,5 +1,26 @@
 # AI YouTube Shorts Generator
 
+## Bodycam fork: quick start
+
+This fork is tuned for turning police bodycam footage into YouTube Shorts. The CLI defaults are:
+
+- `--mode local`: works on files on your machine. Only the transcript text goes to the LLM.
+- `--profile bodycam`: a highlight prompt that looks for escalations, standoffs, twists, absurd exchanges and payoffs, and prefers 20–60s clips with a short setup. Use `--profile general` for the original podcast prompt.
+- `--layout blur`: the full 16:9 frame, centred over a blurred fill, at 1080x1920. Nothing is cropped away, so the bodycam timestamp overlay stays visible. Use `--layout crop` for the original face-tracking crop.
+- Burned-in captions from the transcript, plus the clip title at the top. Turn them off with `--no-captions` and `--no-title`.
+- Every output is H.264/AAC (`+faststart`).
+
+```bash
+python -m venv venv && source venv/bin/activate
+pip install -r requirements-local.txt
+cp .env.example .env        # add OPENAI_API_KEY (or GEMINI_API_KEY + LLM_PROVIDER=gemini)
+python main.py "/path/to/bodycam.mp4" --num-clips 5 --language en --output-json result.json
+```
+
+Review every clip before you upload it. Check for bystanders' and minors' faces, addresses and license plates, and check YouTube's violent/graphic content policies. `result.json` lists every candidate the model picked, with timestamps and a reason, so you can re-cut any you prefer.
+
+---
+
 [![Powered by MuAPI](https://img.shields.io/badge/Powered%20by-MuAPI-6366f1?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMSAxNHYtNGgtMnYtMmg0djZoLTJ6bTAtOFY2aDJ2MmgtMnoiLz48L3N2Zz4=)](https://muapi.ai?utm_source=github&utm_medium=badge&utm_campaign=ai-youtube-shorts-generator)
 
 

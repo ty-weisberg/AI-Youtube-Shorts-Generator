@@ -61,6 +61,58 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 {{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","virality_reason":"string"}}]}}"""
 
 
+BODYCAM_CONTENT_INFO = {"content_type": "police bodycam footage", "density": "medium"}
+
+
+BODYCAM_CRITERIA = """
+This is police body-worn camera (bodycam) footage. The transcript is noisy: radio chatter,
+crosstalk, shouting, and mis-transcribed words are normal. Judge moments by what is happening,
+not by how polished the speech is.
+
+Signals to prioritize (ranked by impact):
+1. ESCALATION / TURNING POINT — the moment calm becomes tense: refusal, raised voices, a sudden
+   "get out of the car", "put your hands up", "stop resisting", a foot chase starting
+2. CONFRONTATION & STANDOFF — repeated commands vs. non-compliance, arguing about rights or the law,
+   "am I being detained?", "I know my rights"
+3. UNEXPECTED TWIST — a surprising admission, a lie caught in real time, a reveal (warrant hit,
+   contraband found, wrong person, "that's not my car")
+4. ABSURD / FUNNY EXCHANGES — ridiculous excuses, bizarre statements, comedic timing between officer
+   and subject (these perform extremely well)
+5. DE-ESCALATION / HUMAN MOMENT — an officer talking someone down, genuine emotion, a respectful or
+   kind resolution
+6. RESOLUTION / PAYOFF — the arrest, the cuffs, the citation, the "you're free to go" — the end of
+   an arc that was set up earlier
+"""
+
+
+BODYCAM_RULES = """Rules:
+- Each clip needs a 1-5 second SETUP so a viewer arriving cold understands what is going on,
+  then gets to the action quickly. Start on a line of dialogue, not mid-word
+- Duration sweet spot: 20-60 seconds. Go up to 90-120s only when an escalation needs the full arc
+  (setup -> conflict -> payoff) to land
+- End on the payoff or a cliffhanger line, never mid-sentence
+- Skip long stretches of silence, radio-only traffic, paperwork, and driving with no dialogue
+- Clips must not overlap significantly with each other
+- Score 0-100 on viral potential for YouTube Shorts (not general quality)
+- {num_clips_instruction}
+- "title" is a short punchy on-screen title (max 6 words, no names), e.g. "Driver Has The Worst Excuse"
+- "hook_sentence" is the opening line of dialogue that would stop someone scrolling
+- Explain in one sentence why this clip works ("virality_reason")"""
+
+
+BODYCAM_SYSTEM_PROMPT = """You are an elite short-form video editor for a YouTube channel that posts police bodycam clips as Shorts. You know which moments make viewers stop scrolling, watch to the end, comment, and share.
+
+{virality_criteria}
+
+""" + BODYCAM_RULES + """
+
+Respond ONLY with valid JSON (no markdown, no explanation):
+{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","virality_reason":"string"}}]}}"""
+
+
+PROFILES = ("bodycam", "general")
+
+
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
 LONG_VIDEO_THRESHOLD = 1800     # chunk videos longer than 30 min
 CHUNK_OVERLAP_SECONDS = 60
@@ -204,18 +256,27 @@ def call_highlight_api(
     num_clips: int,
     is_chunk: bool = False,
     llm_fn: LLMFn = call_muapi_llm,
+    profile: str = "general",
 ) -> Dict:
     # Ask for ~2× the user's target so dedupe has headroom, but cap so the model
     # doesn't have to generate a huge JSON payload (which times out gpt-5-mini).
     target = max(num_clips * 2, 5)
     natural_max = max(2 if is_chunk else 3, int(duration / 90))
     min_clips = min(target, natural_max, 8)
-    system = HIGHLIGHT_SYSTEM_PROMPT.format(
-        virality_criteria=VIRALITY_CRITERIA,
-        content_type=content_info.get("content_type", "other"),
-        density=content_info.get("density", "medium"),
-        num_clips_instruction=f"Generate at least {min_clips} highlights",
-    )
+    if profile == "bodycam":
+        # Bodycam clips are shorter, so more fit in the same footage.
+        min_clips = min(target, max(2 if is_chunk else 3, int(duration / 60)), 10)
+        system = BODYCAM_SYSTEM_PROMPT.format(
+            virality_criteria=BODYCAM_CRITERIA,
+            num_clips_instruction=f"Generate at least {min_clips} highlights",
+        )
+    else:
+        system = HIGHLIGHT_SYSTEM_PROMPT.format(
+            virality_criteria=VIRALITY_CRITERIA,
+            content_type=content_info.get("content_type", "other"),
+            density=content_info.get("density", "medium"),
+            num_clips_instruction=f"Generate at least {min_clips} highlights",
+        )
     base_prompt = f"{system}\n\nTranscript:\n{transcript_text}"
     prompt = base_prompt
     last_error = "unknown"
@@ -273,15 +334,24 @@ def get_highlights(
     transcript: Dict,
     num_clips: int = 3,
     llm_fn: Optional[LLMFn] = None,
+    profile: str = "general",
 ) -> Dict:
     """Main entry point — returns {highlights: [...]} sorted by score.
 
     `llm_fn` swaps the underlying LLM. Defaults to MuAPI gpt-5-mini; local
     mode passes in a local LLM-backed callable.
+
+    `profile` picks the prompt: "general" (podcasts/interviews, upstream
+    behaviour) or "bodycam" (police body-worn camera footage).
     """
+    if profile not in PROFILES:
+        raise ValueError(f"Unknown profile {profile!r}. Use one of {PROFILES}.")
     llm_fn = llm_fn or call_muapi_llm
     duration = transcript.get("duration", 0)
-    content_info = detect_content_type(transcript, llm_fn=llm_fn)
+    if profile == "bodycam":
+        content_info = dict(BODYCAM_CONTENT_INFO)  # no need to spend an LLM call guessing
+    else:
+        content_info = detect_content_type(transcript, llm_fn=llm_fn)
     print(f"[highlights] content={content_info.get('content_type')} density={content_info.get('density')} duration={duration:.0f}s", flush=True)
 
     if duration >= LONG_VIDEO_THRESHOLD:
@@ -292,7 +362,7 @@ def get_highlights(
             offset = chunk.get("_offset", 0)
             text = build_transcript_text(chunk)
             print(f"[highlights] chunk {i + 1}/{len(chunks)} (offset {offset:.0f}s)", flush=True)
-            result = call_highlight_api(text, content_info, chunk["duration"], num_clips=num_clips, is_chunk=True, llm_fn=llm_fn)
+            result = call_highlight_api(text, content_info, chunk["duration"], num_clips=num_clips, is_chunk=True, llm_fn=llm_fn, profile=profile)
             for h in result.get("highlights", []):
                 h["start_time"] = float(h["start_time"]) + offset
                 h["end_time"] = float(h["end_time"]) + offset
@@ -300,7 +370,7 @@ def get_highlights(
         highlights = dedupe_highlights(all_highlights)
     else:
         text = build_transcript_text(transcript)
-        result = call_highlight_api(text, content_info, duration, num_clips=num_clips, llm_fn=llm_fn)
+        result = call_highlight_api(text, content_info, duration, num_clips=num_clips, llm_fn=llm_fn, profile=profile)
         highlights = dedupe_highlights(result.get("highlights", []))
 
     return {"highlights": highlights}

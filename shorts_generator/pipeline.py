@@ -20,6 +20,10 @@ def _run_local(
     aspect_ratio: str,
     download_format: str,
     language: Optional[str],
+    profile: str,
+    layout: str,
+    captions: bool,
+    title_overlay: bool,
 ) -> Dict:
     from .local.clipper import crop_highlights_local
     from .local.downloader import download_youtube_local
@@ -34,7 +38,7 @@ def _run_local(
             "Whisper produced no segments. The video may have no detectable speech."
         )
 
-    highlights_result = get_highlights(transcript, num_clips=num_clips, llm_fn=call_local_llm)
+    highlights_result = get_highlights(transcript, num_clips=num_clips, llm_fn=call_local_llm, profile=profile)
     all_highlights: List[Dict] = highlights_result.get("highlights", [])
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
@@ -42,7 +46,15 @@ def _run_local(
     top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:num_clips]
     print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
 
-    shorts = crop_highlights_local(source_path, top, aspect_ratio=aspect_ratio)
+    shorts = crop_highlights_local(
+        source_path,
+        top,
+        aspect_ratio=aspect_ratio,
+        layout=layout,
+        transcript=transcript,
+        captions=captions,
+        title_overlay=title_overlay,
+    )
 
     return {
         "mode": "local",
@@ -59,6 +71,7 @@ def _run_api(
     aspect_ratio: str,
     download_format: str,
     language: Optional[str],
+    profile: str,
 ) -> Dict:
     source_url = download_youtube(youtube_url, fmt=download_format)
 
@@ -68,7 +81,7 @@ def _run_api(
             "Whisper produced no segments. The video may have no detectable speech."
         )
 
-    highlights_result = get_highlights(transcript, num_clips=num_clips, llm_fn=call_muapi_llm)
+    highlights_result = get_highlights(transcript, num_clips=num_clips, llm_fn=call_muapi_llm, profile=profile)
     all_highlights: List[Dict] = highlights_result.get("highlights", [])
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
@@ -94,6 +107,10 @@ def generate_shorts(
     download_format: str = "720",
     language: Optional[str] = None,
     mode: str = "api",
+    profile: str = "general",
+    layout: str = "blur",
+    captions: bool = True,
+    title_overlay: bool = True,
 ) -> Dict:
     """Run the full pipeline and return a structured result.
 
@@ -105,6 +122,11 @@ def generate_shorts(
         language: ISO-639-1 to force Whisper language detection.
         mode: "api" (default, MuAPI) or "local" (yt-dlp + faster-whisper +
             OpenAI or Gemini + ffmpeg).
+        profile: highlight prompt, "general" or "bodycam".
+        layout: local mode only. "blur" (full frame over a blurred fill) or
+            "crop" (face-tracking crop).
+        captions: local mode only. Burn transcript captions into each clip.
+        title_overlay: local mode only. Burn the highlight title at the top.
 
     Returns:
         {
@@ -117,7 +139,10 @@ def generate_shorts(
     """
     mode = (mode or "api").lower()
     if mode == "local":
-        return _run_local(youtube_url, num_clips, aspect_ratio, download_format, language)
+        return _run_local(
+            youtube_url, num_clips, aspect_ratio, download_format, language,
+            profile, layout, captions, title_overlay,
+        )
     if mode == "api":
-        return _run_api(youtube_url, num_clips, aspect_ratio, download_format, language)
+        return _run_api(youtube_url, num_clips, aspect_ratio, download_format, language, profile)
     raise ValueError(f"Unknown mode: {mode!r}. Use 'api' or 'local'.")
