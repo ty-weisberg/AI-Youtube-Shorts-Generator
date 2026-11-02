@@ -1,8 +1,13 @@
 """CLI entry point.
 
-Usage:
-    python main.py "https://www.youtube.com/watch?v=..." \
-        --num-clips 3 --aspect-ratio 9:16
+One-shot (an LLM picks the clips):
+    python main.py "/path/to/video.mp4" --num-clips 3
+
+Step by step (a person or Claude picks the clips):
+    python main.py prepare "/path/to/video.mp4"     # transcript + frames -> work/<video>/
+    # write work/<video>/highlights.json
+    python main.py review work/<video>              # approve / skip in the browser
+    python main.py render work/<video>              # renders approved clips only
 """
 import argparse
 import json
@@ -18,8 +23,64 @@ if hasattr(sys.stderr, "reconfigure"):
 from shorts_generator import generate_shorts
 
 
+STEP_COMMANDS = ("prepare", "review", "render")
+
+
+def steps_main(argv) -> int:
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(prog="main.py", description="Step-by-step shorts workflow")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("prepare", help="Transcribe a video and extract preview frames into a work dir")
+    p.add_argument("source", help="Local video path, file:// URL, or YouTube URL")
+    p.add_argument("--work", default=None, help="Work dir (default: work/<video name>)")
+    p.add_argument("--language", default="en", help="Whisper language code (default: en)")
+    p.add_argument("--frame-interval", type=float, default=5.0, help="Seconds between preview frames (default: 5)")
+
+    r = sub.add_parser("review", help="Open the clip review page to approve / skip planned clips")
+    r.add_argument("work", help="Work dir created by prepare")
+    r.add_argument("--port", type=int, default=8765)
+    r.add_argument("--no-browser", action="store_true", help="Don't open a browser tab")
+
+    d = sub.add_parser("render", help="Render approved clips from highlights.json")
+    d.add_argument("work", help="Work dir created by prepare")
+    d.add_argument("--aspect-ratio", default="9:16")
+    d.add_argument("--layout", choices=["blur", "crop"], default="blur")
+    d.add_argument("--no-captions", action="store_true")
+    d.add_argument("--no-title", action="store_true")
+    d.add_argument("--include-pending", action="store_true", help="Also render clips not yet reviewed")
+
+    args = parser.parse_args(argv)
+    try:
+        if args.cmd == "prepare":
+            from shorts_generator.local.workflow import prepare
+            prepare(args.source, Path(args.work) if args.work else None, args.language, args.frame_interval)
+        elif args.cmd == "review":
+            from shorts_generator.local.review import serve
+            serve(Path(args.work), port=args.port, open_browser=not args.no_browser)
+        else:
+            from shorts_generator.local.workflow import render
+            done = render(
+                Path(args.work), aspect_ratio=args.aspect_ratio, layout=args.layout,
+                captions=not args.no_captions, title_overlay=not args.no_title,
+                include_pending=args.include_pending,
+            )
+            for c in done:
+                print(f"  {c['id']}: {c.get('clip_path') or 'FAILED: ' + c.get('render_error', '')}")
+    except Exception as e:
+        print(f"\nFAILED: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="AI YouTube Shorts Generator")
+    if len(sys.argv) > 1 and sys.argv[1] in STEP_COMMANDS:
+        return steps_main(sys.argv[1:])
+    parser = argparse.ArgumentParser(
+        description="AI YouTube Shorts Generator (one-shot). For the step-by-step workflow see: "
+        "main.py prepare -h, main.py review -h, main.py render -h"
+    )
     parser.add_argument("url", help="YouTube URL, file:// URL, or local file path")
     parser.add_argument(
         "--mode",

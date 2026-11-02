@@ -17,6 +17,19 @@ cp .env.example .env        # add OPENAI_API_KEY (or GEMINI_API_KEY + LLM_PROVID
 python main.py "/path/to/bodycam.mp4" --num-clips 5 --language en --output-json result.json
 ```
 
+### Step by step: you approve the clips before they're made
+
+When a person (or Claude) picks the clips instead of an LLM API, no API key is needed:
+
+```bash
+python main.py prepare "/path/to/bodycam.mp4"   # transcript (with word timings) + a frame every 5s -> work/bodycam/
+# the picker writes work/bodycam/highlights.json (format: shorts_generator/local/workflow.py)
+python main.py review work/bodycam              # opens a local page: play each moment, Approve / Skip / add a note
+python main.py render work/bodycam              # renders only the approved clips -> work/bodycam/clips/
+```
+
+`transcript.txt` is the transcript in a compact `[mm:ss.s] text` form for reading. The review page runs only on `127.0.0.1`, and your choices save straight into `highlights.json`.
+
 Review every clip before you upload it. Check for bystanders' and minors' faces, addresses and license plates, and check YouTube's violent/graphic content policies. `result.json` lists every candidate the model picked, with timestamps and a reason, so you can re-cut any you prefer.
 
 ---
