@@ -3,6 +3,7 @@
 Reads a local media file and returns the same shape the highlight generator
 expects: {duration, segments[start, end, text]}.
 """
+import json
 import os
 import re
 from pathlib import Path
@@ -95,8 +96,27 @@ def _resolve_device() -> str:
     return "cpu"
 
 
+def _json_cache_path(media_path: str) -> Path:
+    return _transcript_cache_path(media_path).with_suffix(".json")
+
+
 def transcribe_local(media_path: str, language: Optional[str] = None) -> Dict:
-    """Run faster-whisper on a local file path, caching the result as .srt."""
+    """Run faster-whisper on a local file path.
+
+    Each segment carries word-level timings (`words: [{start, end, word}]`) so
+    captions can follow speech exactly. Results are cached as JSON (with
+    words) and as .srt (segments only, for compatibility and easy reading).
+    """
+    json_cache = _json_cache_path(media_path)
+    if json_cache.exists() and json_cache.stat().st_mtime >= os.path.getmtime(media_path):
+        try:
+            cached = json.loads(json_cache.read_text(encoding="utf-8"))
+            if cached.get("segments") and cached.get("duration", 0) > 0:
+                print(f"[transcribe/local] reusing cached transcript: {json_cache}", flush=True)
+                return cached
+        except (OSError, ValueError):
+            pass
+
     cache_path = _transcript_cache_path(media_path)
     if cache_path.exists():
         source_mtime = os.path.getmtime(media_path)
@@ -137,6 +157,7 @@ def transcribe_local(media_path: str, language: Optional[str] = None) -> Dict:
         "language": language,
         "beam_size": 5,
         "condition_on_previous_text": False,
+        "word_timestamps": True,
     }
     if LOCAL_WHISPER_VAD_FILTER:
         transcribe_kwargs["vad_filter"] = True
@@ -148,15 +169,22 @@ def transcribe_local(media_path: str, language: Optional[str] = None) -> Dict:
 
     segments = []
     for s in segments_iter:
+        words = [
+            {"start": float(w.start), "end": float(w.end), "word": (w.word or "").strip()}
+            for w in (getattr(s, "words", None) or [])
+            if (w.word or "").strip()
+        ]
         segments.append({
             "start": float(s.start),
             "end": float(s.end),
             "text": (s.text or "").strip(),
+            "words": words,
         })
 
     duration = float(getattr(info, "duration", 0.0)) or (segments[-1]["end"] if segments else 0.0)
     print(f"[transcribe/local] {len(segments)} segments, {duration:.0f}s of audio", flush=True)
     transcript = {"duration": duration, "segments": segments}
     cache_path = _write_srt_cache(media_path, transcript)
-    print(f"[transcribe/local] wrote cache: {cache_path}", flush=True)
+    json_cache.write_text(json.dumps(transcript), encoding="utf-8")
+    print(f"[transcribe/local] wrote cache: {json_cache}", flush=True)
     return transcript

@@ -4,8 +4,9 @@ Builds an ASS subtitle file for one clip from the Whisper transcript:
   * caption lines (bottom), split into short chunks so they read on a phone
   * an optional title bar (top), e.g. the highlight's title
 
-Whisper segments only carry segment-level timing, so long segments are split
-into chunks of a few words and the segment's time is shared out by word count.
+When segments carry Whisper word timings (`words`), each caption chunk uses
+the real start/end of its words. Otherwise long segments are split into chunks
+of a few words and the segment's time is shared out by word count.
 """
 from typing import Dict, List, Optional
 
@@ -43,6 +44,20 @@ def caption_events(
         s_start = float(seg["start"])
         s_end = float(seg["end"])
         if s_end <= clip_start or s_start >= clip_end:
+            continue
+        timed = seg.get("words") or []
+        if timed:
+            for i in range(0, len(timed), max_words):
+                chunk = timed[i:i + max_words]
+                c_start = max(float(chunk[0]["start"]), clip_start)
+                c_end = min(float(chunk[-1]["end"]), clip_end)
+                if c_end - c_start < 0.05:
+                    continue
+                events.append({
+                    "start": c_start - clip_start,
+                    "end": c_end - clip_start,
+                    "text": " ".join(str(w["word"]).strip() for w in chunk),
+                })
             continue
         words = str(seg.get("text", "")).split()
         if not words:
