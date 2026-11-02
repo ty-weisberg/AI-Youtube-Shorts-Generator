@@ -11,6 +11,8 @@ This fork is tuned for turning police bodycam footage into YouTube Shorts. The C
 - Every output is H.264/AAC (`+faststart`).
 
 ```bash
+# macOS: captions need an ffmpeg built with libass. Homebrew's plain `ffmpeg` lacks it, so use ffmpeg-full:
+#   brew install ffmpeg-full && export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 python -m venv venv && source venv/bin/activate
 pip install -r requirements-local.txt
 cp .env.example .env        # add OPENAI_API_KEY (or GEMINI_API_KEY + LLM_PROVIDER=gemini)
