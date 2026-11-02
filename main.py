@@ -24,9 +24,23 @@ def main() -> int:
     parser.add_argument(
         "--mode",
         choices=["api", "local"],
-        default="api",
-        help="api (default, MuAPI) or local (remote URL, file://, or local path + faster-whisper + LLM provider + ffmpeg).",
+        default="local",
+        help="local (default: remote URL, file://, or local path + faster-whisper + LLM provider + ffmpeg) or api (MuAPI).",
     )
+    parser.add_argument(
+        "--profile",
+        choices=["bodycam", "general"],
+        default="bodycam",
+        help="Highlight prompt: bodycam (default, police body-worn camera footage) or general (podcasts/interviews).",
+    )
+    parser.add_argument(
+        "--layout",
+        choices=["blur", "crop"],
+        default="blur",
+        help="Local mode: blur (default, full frame over a blurred fill) or crop (face-tracking crop).",
+    )
+    parser.add_argument("--no-captions", action="store_true", help="Local mode: don't burn in captions")
+    parser.add_argument("--no-title", action="store_true", help="Local mode: don't burn the clip title at the top")
     parser.add_argument("--num-clips", type=int, default=3, help="How many shorts to render (default: 3)")
     parser.add_argument("--aspect-ratio", default="9:16", help="Output aspect ratio (default: 9:16)")
     parser.add_argument("--format", default="720", help="Source download resolution: 360 / 480 / 720 / 1080 (default: 720)")
@@ -42,6 +56,10 @@ def main() -> int:
             download_format=args.format,
             language=args.language,
             mode=args.mode,
+            profile=args.profile,
+            layout=args.layout,
+            captions=not args.no_captions,
+            title_overlay=not args.no_title,
         )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)
